@@ -1,0 +1,22 @@
+data:
+  path: data
+  sep_token: "[SEP]"
+
+train:
+  awp: False
+  gc: False
+  checkpoint: microsoft/deberta-v3-small
+  batch_size: 128
+  lr: 8e-5
+  wd: 0.01
+  epochs: 4
+
+create_csv: False
+run_name: False
+wandb: True
+
+gc:
+  clip_value: 1000
+awp:
+  start: 1
+  adv_lr: 1e-4
