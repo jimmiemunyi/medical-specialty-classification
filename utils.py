@@ -1,10 +1,12 @@
 """Some Utility Functions that help iterate faster."""
+from collections import Counter
 from functools import partial
 
 import pandas as pd
 import numpy as np
 
-from torch.utils.data import DataLoader
+from torch import tensor
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
 
@@ -21,7 +23,7 @@ from torchmetrics import F1Score
 
 
 def process_df(df: pd.DataFrame, sep_token: str):
-    df["input"] = df.description
+    df["input"] = df.sample_name + sep_token + df.description + sep_token
     df.input = df.input.str.lower()
     return df
 
@@ -75,14 +77,27 @@ def tokenize_and_split(df, tokenize_func, train=True):
     return tok_dataset
 
 
-def create_dataloaders(tok_ds, bs, train=True):
+def make_balanced_sampler(tok_ds):
+    labels = tok_ds["train"]["labels"]
+    label_counts = Counter(labels)
+    weights = 1 / np.array([label_counts[label] for label in labels])
+    weights = tensor(weights)
+    sampler = WeightedRandomSampler(
+        weights,
+        num_samples=len(weights),
+    )
+    return sampler
+
+
+def create_dataloaders(tok_ds, bs, sampler=None, train=True):
     if train:
         train_dl = DataLoader(
             tok_ds["train"],
             batch_size=bs,
-            shuffle=True,
+            # shuffle=True,
             collate_fn=default_data_collator,
             drop_last=True,
+            sampler=sampler,
         )
         val_dl = DataLoader(
             tok_ds["test"],
@@ -109,7 +124,8 @@ def prepare_data(df, tokenizer, sep_token, bs, training=True):
         train_df = process_df(df, sep_token)
         tokenize = partial(tokenize_func, tokenizer=tokenizer)
         train_tok_ds = tokenize_and_split(train_df, tokenize)
-        train_dl, val_dl = create_dataloaders(train_tok_ds, bs)
+        sampler = make_balanced_sampler(train_tok_ds)
+        train_dl, val_dl = create_dataloaders(train_tok_ds, bs, sampler)
 
         return train_dl, val_dl
     else:
@@ -202,7 +218,8 @@ def fit(
     return trainer
 
 
-def predict(trainer, test_dl, int2label):
+def predict(trainer, test_dl, int2label, custom=False):
+    # implement custom predict function
     preds = trainer.predict(test_dl)[0]["logits"].argmax(1).numpy().astype(int)
     preds = preds.tolist()
     preds = [int2label[pred] for pred in preds]

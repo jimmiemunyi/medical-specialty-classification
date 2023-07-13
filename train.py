@@ -12,6 +12,7 @@ from composer.models import HuggingFaceModel
 from composer.metrics import CrossEntropy
 from composer import Trainer
 from composer.loggers import WandBLogger
+from composer.algorithms import GradientClipping
 
 from torchmetrics import F1Score
 
@@ -21,6 +22,8 @@ from utils import (
     prepare_optimizer_and_scheduler,
     predict,
 )
+from model import MedicalClassification
+from awp import AWP
 
 logger = Printer()
 
@@ -49,21 +52,40 @@ def train(cfg: DictConfig):
     logger.info("Loading the model, optimizer, and scheduler")
     f1_score = F1Score(task="multiclass", num_classes=num_labels)
     ptrn_model = AutoModelForSequenceClassification.from_pretrained(
-        cfg.train.checkpoint,
-        num_labels=num_labels,
+        cfg.train.checkpoint, num_labels=num_labels, ignore_mismatched_sizes=True
     )
     composer_model = HuggingFaceModel(
         model=ptrn_model,
         tokenizer=tokenizer,
         metrics=[CrossEntropy(), f1_score],
         use_logits=True,
-        # allow_embedding_resizing=True
+        allow_embedding_resizing=True,
     )
+    # composer_model = MedicalClassification(
+    #     checkpoint=cfg.train.checkpoint,
+    #     tokenizer=tokenizer,
+    #     pretrained=True,
+    #     num_labels=num_labels,
+    # )
 
     # preparing optimizer and scheduler
     optimizer, scheduler = prepare_optimizer_and_scheduler(
         composer_model, cfg.train.lr, cfg.train.wd, cfg.train.epochs, train_dl
     )
+    algorithms = []
+
+    if cfg.train.gc:
+        gc = GradientClipping(
+            clipping_type=cfg.gc.type, clipping_threshold=cfg.gc.value
+        )
+        algorithms.append(gc)
+    if cfg.train.awp:
+        awp = AWP(
+            start_epoch=cfg.awp.start,
+            adv_lr=cfg.awp.adv_lr,
+            adv_eps=cfg.awp.adv_eps,
+        )
+        algorithms.append(awp)
 
     if cfg.run_name:
         run_name = cfg.run_name
@@ -82,6 +104,7 @@ def train(cfg: DictConfig):
         max_duration=f"{cfg.train.epochs}ep",
         optimizers=optimizer,
         schedulers=[scheduler],
+        algorithms=algorithms,
         loggers=loggers,
         run_name=run_name,
         device="gpu",
